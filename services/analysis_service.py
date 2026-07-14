@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import re
+import unicodedata
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable
 
@@ -83,7 +84,10 @@ class AnalysisService:
     def _normalize_activity_name(value: Any) -> str:
         """Normaliza nombres para poder empatar el plan aunque Canvas cambie un ID."""
         text = str(value or "").strip().lower()
-        text = re.sub(r"\s+", " ", text)
+        text = unicodedata.normalize("NFKD", text)
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        text = re.sub(r"[^a-z0-9]+", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
         return text
 
     @staticmethod
@@ -153,7 +157,7 @@ class AnalysisService:
             if not assignment_id:
                 continue
 
-            week_number = self._plan_week(row.get("week_number"), self.config.course_weeks)
+            week_number = self._plan_week(row.get("week_number") or row.get("Semana"), self.config.course_weeks)
             include = self._plan_bool(row.get("include_in_risk", True), True) and week_number is not None
             plan_by_assignment[assignment_id] = {
                 "week_number": week_number,
@@ -167,6 +171,8 @@ class AnalysisService:
             for assignment in assignments
             if plan_by_assignment.get(self._assignment_id(assignment), {}).get("include_in_risk")
         ]
+        # Se usa el plan solo si existen actividades incluidas y empataron con Canvas.
+        # Si hay filas de plan pero no empatan, se deja evidencia en diagnósticos y se usa respaldo.
         if planned_included:
             expected_set = [
                 assignment
@@ -183,13 +189,14 @@ class AnalysisService:
                     )
                 )
             return {
-                "method": "Plan semanal guardado",
+                "method": "Plan semanal del curso",
                 "uses_saved_plan": True,
                 "included_assignments": planned_included,
                 "expected_assignments": expected_set,
                 "weekly_distribution": distribution,
                 "assignment_plan": plan_by_assignment,
                 "planned_rows_matched": len(plan_by_assignment),
+                "planned_rows_included_matched": len(planned_included),
                 "planned_rows_available": len(plan_rows),
             }
 
@@ -221,7 +228,8 @@ class AnalysisService:
             "expected_assignments": expected_set,
             "weekly_distribution": distribution,
             "assignment_plan": fallback_plan,
-            "planned_rows_matched": 0,
+            "planned_rows_matched": len(plan_by_assignment),
+            "planned_rows_included_matched": 0,
             "planned_rows_available": len(plan_rows),
         }
 
@@ -698,6 +706,7 @@ class AnalysisService:
             "uses_saved_activity_plan": bool(plan_resolution["uses_saved_plan"]),
             "activity_plan_rows_available": plan_resolution.get("planned_rows_available", 0),
             "activity_plan_rows_matched": plan_resolution.get("planned_rows_matched", 0),
+            "activity_plan_rows_included_matched": plan_resolution.get("planned_rows_included_matched", 0),
             "analysis_week": week,
             "window_start": start_time.isoformat(),
             "window_end": end_time.isoformat(),

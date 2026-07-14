@@ -186,8 +186,8 @@ elif not demo_mode and not db.connected:
     st.info("Sin Supabase conectado ni plan en sesión, el análisis usará la distribución uniforme de respaldo.")
 
 st.caption(
-    "La meta acumulada usa primero el Plan semanal guardado en Supabase. "
-    "Si el curso no tiene plan, se mantiene la distribución uniforme anterior como respaldo temporal."
+    "La meta acumulada usa primero el Plan semanal del curso configurado en la sesión o guardado en Supabase. "
+    "Si no hay actividades asignadas a semanas, se mantiene la distribución uniforme anterior solo como respaldo temporal."
 )
 
 if st.button("Ejecutar análisis semanal", type="primary", width="stretch"):

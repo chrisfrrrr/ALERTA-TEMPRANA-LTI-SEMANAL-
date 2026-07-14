@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+import hashlib
 from typing import Any
 
 import pandas as pd
@@ -13,13 +13,12 @@ from services.auth_service import current_actor, get_valid_canvas_token, load_oa
 from services.canvas_service import CanvasAPIError, CanvasService
 from services.database_service import DatabaseError
 from services.demo_service import demo_courses
-from services.risk_engine import expected_activities
 from services.runtime import get_database
 
 
 page_header(
     "Plan semanal del curso",
-    "Asigne cada actividad detectada en Canvas a la semana real del curso. Este plan será la fuente principal para calcular el avance esperado.",
+    "Asigne manualmente cada actividad detectada en Canvas a la semana real del curso. Este plan será la fuente principal para calcular el avance esperado y las derivaciones.",
 )
 
 config = RiskConfig.from_dict(st.session_state.get("risk_config"))
@@ -40,15 +39,6 @@ if not demo_mode:
 
 def _activity_type(assignment: dict[str, Any]) -> str:
     return AnalysisService._activity_type(assignment)
-
-
-def _default_week(index: int, total: int, total_weeks: int) -> int:
-    if total <= 0:
-        return 1
-    for week_number in range(1, total_weeks + 1):
-        if index <= expected_activities(total, week_number, total_weeks):
-            return week_number
-    return total_weeks
 
 
 def _demo_assignments(course_id: str | int) -> list[dict[str, Any]]:
@@ -96,42 +86,54 @@ def _load_canvas_assignments(course: dict[str, Any], include_zero_point: bool) -
     return AnalysisService._valid_assignments(raw, include_zero_point=include_zero_point)
 
 
+def _plan_signature(plan: pd.DataFrame) -> str:
+    if plan.empty:
+        return "sin_plan"
+    cols = [col for col in ["canvas_assignment_id", "activity_name", "week_number", "include_in_risk", "is_required"] if col in plan.columns]
+    if not cols:
+        return "sin_columnas"
+    payload = plan[cols].fillna("").astype(str).sort_values(cols).to_csv(index=False)
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()[:10]
+
+
 def _build_editor_df(assignments: list[dict[str, Any]], plan: pd.DataFrame) -> pd.DataFrame:
+    """Construye la tabla editable.
+
+    Cuando no existe plan guardado, no se asignan semanas automáticamente. Esto evita
+    que actividades de semana 1 aparezcan sugeridas en semanas 2, 3 o posteriores.
+    La distribución uniforme se deja únicamente como acción opcional del usuario.
+    """
     plan_by_id: dict[str, dict[str, Any]] = {}
+    plan_by_name: dict[str, dict[str, Any]] = {}
     if not plan.empty:
         for row in plan.to_dict(orient="records"):
-            plan_by_id[str(row.get("canvas_assignment_id") or "")] = row
+            row_id = str(row.get("canvas_assignment_id") or "").strip()
+            row_name = AnalysisService._normalize_activity_name(row.get("activity_name") or row.get("Actividad") or row.get("name") or "")
+            if row_id:
+                plan_by_id[row_id] = row
+            if row_name:
+                plan_by_name[row_name] = row
 
-    total = len(assignments)
     rows: list[dict[str, Any]] = []
     for index, assignment in enumerate(assignments, start=1):
         assignment_id = str(assignment.get("id") or "")
-        existing = plan_by_id.get(assignment_id, {})
-        if existing:
-            include = bool(existing.get("include_in_risk", True)) and existing.get("week_number") is not None
-            try:
-                week_value = int(existing.get("week_number")) if existing.get("week_number") is not None else None
-            except (TypeError, ValueError):
-                week_value = None
-            week_label = f"Semana {week_value}" if include and week_value else "No incluir"
-            is_required = bool(existing.get("is_required", True))
-            manual_note = existing.get("manual_note") or ""
-        else:
-            include = True
-            week_label = f"Semana {_default_week(index, total, config.course_weeks)}"
-            is_required = True
-            manual_note = ""
+        assignment_name = assignment.get("name") or f"Actividad {assignment_id}"
+        existing = plan_by_id.get(assignment_id) or plan_by_name.get(AnalysisService._normalize_activity_name(assignment_name)) or {}
+
+        week_value = AnalysisService._plan_week(existing.get("week_number") or existing.get("Semana"), config.course_weeks) if existing else None
+        include = AnalysisService._plan_bool(existing.get("include_in_risk", True), True) if existing else False
+        week_label = f"Semana {week_value}" if include and week_value else "No incluir"
 
         rows.append(
             {
-                "Incluir": include,
+                "Orden": index,
                 "Semana": week_label,
-                "Actividad": assignment.get("name") or f"Actividad {assignment_id}",
+                "Actividad": assignment_name,
                 "Tipo": existing.get("activity_type") or _activity_type(assignment),
                 "Puntos": float(assignment.get("points_possible") or 0),
                 "Fecha límite Canvas": assignment.get("due_at") or "Sin fecha",
-                "Obligatoria": is_required,
-                "Observación": manual_note,
+                "Obligatoria": AnalysisService._plan_bool(existing.get("is_required", True), True) if existing else True,
+                "Observación": existing.get("manual_note") or "",
                 "ID Canvas": assignment_id,
             }
         )
@@ -141,21 +143,15 @@ def _build_editor_df(assignments: list[dict[str, Any]], plan: pd.DataFrame) -> p
 def _editor_to_records(editor_df: pd.DataFrame) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for row in editor_df.to_dict(orient="records"):
-        week_label = str(row.get("Semana") or "No incluir")
-        include = bool(row.get("Incluir")) and week_label != "No incluir"
-        week_number = None
-        if include:
-            try:
-                week_number = int(week_label.replace("Semana", "").strip())
-            except ValueError:
-                week_number = None
-                include = False
+        week_label = str(row.get("Semana") or "No incluir").strip()
+        week_number = AnalysisService._plan_week(week_label, config.course_weeks)
+        include = week_number is not None
         due_at = row.get("Fecha límite Canvas")
         if due_at in ("Sin fecha", "", None):
             due_at = None
         records.append(
             {
-                "canvas_assignment_id": str(row.get("ID Canvas") or ""),
+                "canvas_assignment_id": str(row.get("ID Canvas") or "").strip(),
                 "activity_name": str(row.get("Actividad") or "Actividad sin nombre"),
                 "activity_type": str(row.get("Tipo") or "Actividad"),
                 "due_at": due_at,
@@ -169,14 +165,28 @@ def _editor_to_records(editor_df: pd.DataFrame) -> list[dict[str, Any]]:
     return records
 
 
+def _apply_uniform_distribution(df: pd.DataFrame) -> pd.DataFrame:
+    result = df.copy()
+    included_indexes = result.index.tolist()
+    total = len(included_indexes)
+    for position, index in enumerate(included_indexes, start=1):
+        # Distribución acumulativa uniforme como propuesta opcional; no se usa por defecto.
+        week = min(config.course_weeks, max(1, int(((position - 1) * config.course_weeks) // max(total, 1) + 1)))
+        result.loc[index, "Semana"] = f"Semana {week}"
+    return result
+
+
 def _summary(records: list[dict[str, Any]]) -> pd.DataFrame:
     data = []
+    cumulative = 0
     for week_number in range(1, config.course_weeks + 1):
         week_records = [record for record in records if record.get("include_in_risk") and record.get("week_number") == week_number]
+        cumulative += len(week_records)
         data.append(
             {
                 "Semana": f"Semana {week_number}",
-                "Actividades": len(week_records),
+                "Actividades de la semana": len(week_records),
+                "Meta acumulada": cumulative,
                 "Puntos": round(sum(float(record.get("points_possible") or 0) for record in week_records), 2),
                 "Ejemplos": ", ".join(record["activity_name"] for record in week_records[:3]) + ("..." if len(week_records) > 3 else ""),
             }
@@ -184,7 +194,8 @@ def _summary(records: list[dict[str, Any]]) -> pd.DataFrame:
     data.append(
         {
             "Semana": "No incluir",
-            "Actividades": sum(1 for record in records if not record.get("include_in_risk")),
+            "Actividades de la semana": sum(1 for record in records if not record.get("include_in_risk")),
+            "Meta acumulada": "—",
             "Puntos": round(sum(float(record.get("points_possible") or 0) for record in records if not record.get("include_in_risk")), 2),
             "Ejemplos": "",
         }
@@ -234,38 +245,65 @@ if not assignments:
 existing_plan = db.get_course_activity_plan(course_id) if db.connected else pd.DataFrame()
 if existing_plan.empty:
     st.info(
-        "Este curso aún no tiene plan guardado. La tabla se propone con una distribución inicial uniforme para que pueda ajustarla manualmente."
+        "Este curso aún no tiene plan guardado. Las actividades aparecen inicialmente como 'No incluir' para que usted asigne únicamente las que corresponden a cada semana."
     )
 else:
-    st.success(f"Plan semanal existente cargado: {len(existing_plan)} actividades configuradas.")
+    included_existing = int(existing_plan.get("include_in_risk", pd.Series(dtype=bool)).fillna(False).sum())
+    st.success(f"Plan semanal existente cargado: {included_existing} actividades incluidas en riesgo.")
 
-editor_df = _build_editor_df(assignments, existing_plan)
+base_df = _build_editor_df(assignments, existing_plan)
 week_options = ["No incluir"] + [f"Semana {week_number}" for week_number in range(1, config.course_weeks + 1)]
+
+# Evita que Streamlit reutilice una tabla editada de otro curso o de otra carga.
+revision_key = f"activity_plan_editor_revision_{course_id}_{include_zero_point}_{'demo' if demo_mode else 'real'}"
+st.session_state.setdefault(revision_key, 0)
+editor_key = f"activity_plan_editor_{course_id}_{include_zero_point}_{_plan_signature(existing_plan)}_{st.session_state[revision_key]}"
 
 st.markdown("#### Asignación de actividades")
 st.caption(
-    "Cambie la semana de cada actividad según el plan real del curso. Las actividades marcadas como 'No incluir' no afectarán el riesgo."
+    "Seleccione la semana real de cada actividad. Las filas en 'No incluir' no cuentan para el riesgo, la meta acumulada ni las derivaciones."
 )
 
+a1, a2, a3 = st.columns([1.2, 1.25, 1.55])
+with a1:
+    if st.button("Limpiar asignación", use_container_width=True):
+        base_df["Semana"] = "No incluir"
+        st.session_state[revision_key] += 1
+        st.session_state[f"course_activity_plan_records_{course_id}"] = _editor_to_records(base_df)
+        st.rerun()
+with a2:
+    if st.button("Proponer distribución uniforme", use_container_width=True):
+        base_df = _apply_uniform_distribution(base_df)
+        st.session_state[revision_key] += 1
+        st.session_state[f"course_activity_plan_records_{course_id}"] = _editor_to_records(base_df)
+        # Guardamos un dataframe temporal para que el siguiente render lo use como base.
+        st.session_state[f"activity_plan_temp_df_{course_id}_{include_zero_point}"] = base_df
+        st.rerun()
+with a3:
+    st.caption("Tip: para su caso actual, asigne manualmente las actividades porque Canvas aún no tiene fechas de entrega.")
+
+temp_key = f"activity_plan_temp_df_{course_id}_{include_zero_point}"
+if temp_key in st.session_state:
+    base_df = st.session_state.pop(temp_key)
+
 edited = st.data_editor(
-    editor_df,
+    base_df,
     use_container_width=True,
     hide_index=True,
     num_rows="fixed",
-    disabled=["Actividad", "Tipo", "Puntos", "Fecha límite Canvas", "ID Canvas"],
+    disabled=["Orden", "Actividad", "Tipo", "Puntos", "Fecha límite Canvas", "ID Canvas"],
     column_config={
-        "Incluir": st.column_config.CheckboxColumn("Incluir", help="Cuenta para el cálculo de avance y riesgo."),
-        "Semana": st.column_config.SelectboxColumn("Semana", options=week_options, required=True),
+        "Orden": st.column_config.NumberColumn("#", width="small"),
+        "Semana": st.column_config.SelectboxColumn("Semana", options=week_options, required=True, width="medium"),
         "Obligatoria": st.column_config.CheckboxColumn("Obligatoria"),
         "Observación": st.column_config.TextColumn("Observación", width="medium"),
         "ID Canvas": st.column_config.TextColumn("ID Canvas", width="small"),
     },
-    key=f"activity_plan_editor_{course_id}",
+    key=editor_key,
 )
 
 records = _editor_to_records(edited)
-# Mantiene el plan editado en la sesión activa. Así el análisis puede usarlo
-# de inmediato aunque el usuario aún no lo haya guardado en Supabase.
+# Mantiene el plan editado en la sesión activa. Así el análisis puede usarlo de inmediato.
 st.session_state[f"course_activity_plan_records_{course_id}"] = records
 st.session_state[f"course_activity_plan_name_{course_id}"] = course_name
 summary_df = _summary(records)
@@ -273,16 +311,26 @@ summary_df = _summary(records)
 st.markdown("#### Resumen del plan")
 st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
-c1, c2, c3 = st.columns(3)
+included_count = sum(1 for record in records if record.get("include_in_risk"))
+week_one_count = sum(1 for record in records if record.get("include_in_risk") and record.get("week_number") == 1)
+without_week = sum(1 for record in records if not record.get("include_in_risk"))
+
+c1, c2, c3, c4 = st.columns(4)
 c1.metric("Actividades detectadas", len(assignments))
-c2.metric("Incluidas en riesgo", sum(1 for record in records if record.get("include_in_risk")))
-c3.metric("Sin incluir", sum(1 for record in records if not record.get("include_in_risk")))
+c2.metric("Incluidas en riesgo", included_count)
+c3.metric("Semana 1", week_one_count)
+c4.metric("Sin incluir", without_week)
+
+if included_count == 0:
+    st.warning("Todavía no hay actividades asignadas a semanas. Si ejecuta el análisis así, la app usará distribución uniforme de respaldo.")
+else:
+    st.success(
+        "El próximo análisis usará este plan de la sesión. Para conservarlo en futuras sesiones y en las derivaciones, presione Guardar plan semanal."
+    )
 
 st.divider()
 if st.button("Guardar plan semanal del curso", type="primary", use_container_width=True, disabled=not db.connected):
     try:
-        # Refuerza la sesión antes de persistir, para que el siguiente análisis
-        # use exactamente la configuración que el asesor acaba de revisar.
         st.session_state[f"course_activity_plan_records_{course_id}"] = records
         st.session_state[f"course_activity_plan_name_{course_id}"] = course_name
         saved = db.save_course_activity_plan(
@@ -300,19 +348,23 @@ if st.button("Guardar plan semanal del curso", type="primary", use_container_wid
                 "course_id": str(course_id),
                 "course_name": course_name,
                 "records_saved": saved,
-                "included_in_risk": sum(1 for record in records if record.get("include_in_risk")),
+                "included_in_risk": included_count,
                 "weekly_distribution": summary_df.to_dict(orient="records"),
             },
         )
-        st.success(f"Plan semanal guardado correctamente para {saved} actividades.")
+        st.session_state[revision_key] += 1
+        st.success(f"Plan semanal guardado correctamente para {saved} actividades. Semana 1 quedó con {week_one_count} actividad(es) esperadas.")
     except DatabaseError as exc:
         st.error(str(exc))
 
 with st.expander("Cómo se usará este plan en el análisis"):
     st.markdown(
         """
-        Cuando ejecute el análisis semanal, la aplicación revisará primero si existe un plan guardado para este curso.
-        Si existe, la meta acumulada se calculará sumando las actividades incluidas desde la semana 1 hasta la semana analizada.
-        Si no existe plan, la aplicación usará la distribución uniforme como respaldo temporal.
+        Cuando ejecute el análisis semanal, la aplicación revisará primero el plan configurado en esta pestaña.
+        La meta acumulada se calculará sumando las actividades incluidas desde la semana 1 hasta la semana analizada.
+
+        Ejemplo: si asigna 4 actividades a Semana 1 y analiza Semana 1, la meta será 4. Si el estudiante completó las 4, el avance será 4/4.
+
+        La distribución uniforme solo se usará cuando no exista ninguna actividad asignada en el plan.
         """
     )

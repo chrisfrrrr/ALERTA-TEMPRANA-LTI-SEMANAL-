@@ -10,7 +10,8 @@ Aplicación profesional en Streamlit para analizar cursos de **cinco semanas**, 
 - Roles internos en Supabase: `admin`, `asesor_academico`, `asesor_bienestar` y `consulta`.
 - Bitácora de auditoría para accesos, análisis, mensajes, respuestas y derivaciones.
 - Selección de curso, sección, semana 1–5 y fecha de corte.
-- Meta semanal acumulada: `techo(total de actividades × semana / 5)`.
+- Plan semanal del curso configurable: cada actividad se asigna manualmente a Semana 1–5 o `No incluir`.
+- Meta semanal acumulada basada en el plan real configurado; la distribución uniforme queda solo como respaldo cuando no existe plan.
 - Análisis de actividades, promedio, puntualidad, actividad en Canvas y respuesta a comunicaciones.
 - Dashboard general y expediente individual por estudiante.
 - Mensajes personalizados por riesgo y envío mediante Conversations API de Canvas.
@@ -111,6 +112,19 @@ REQUIRE_AUTHORIZED_USER = true
 
 Con `REQUIRE_AUTHORIZED_USER=true`, solamente podrán entrar usuarios registrados en la tabla `authorized_users`.
 
+## Plan semanal del curso
+
+Cuando Canvas no tiene fechas de entrega, configure manualmente el plan semanal:
+
+1. Seleccione el curso.
+2. En cada actividad, elija `Semana 1`, `Semana 2`, `Semana 3`, `Semana 4`, `Semana 5` o `No incluir`.
+3. Presione **Guardar plan semanal del curso**.
+4. Ejecute el análisis semanal desde **Conexión y análisis**.
+
+Ejemplo: si asigna cuatro actividades a Semana 1, el análisis de Semana 1 esperará cuatro actividades. Un estudiante que completó las cuatro aparecerá con avance `4/4`.
+
+La app ya no preasigna semanas automáticamente cuando no hay plan guardado. Esto evita que actividades reales de Semana 1 aparezcan sugeridas en Semana 2 o Semana 3.
+
 ## Roles internos
 
 | Rol | Alcance recomendado |
@@ -129,14 +143,16 @@ La versión actual aplica restricción de navegación por rol en Streamlit. Para
 3. Autorice el acceso desde Canvas.
 4. Entre a **Conexión y análisis**.
 5. Cargue cursos desde Canvas.
-6. Seleccione curso, sección, semana y fecha de corte.
-7. Active Page Views solo cuando la Developer Key tenga permiso y se necesite estimar sesiones.
-8. Ejecute el análisis.
-9. Revise el dashboard general y los expedientes individuales.
-10. Envíe mensajes desde **Mensajería Canvas**.
-11. Prepare derivaciones desde **Derivaciones**.
-12. Compare cortes desde **Historial y evolución**.
-13. Revise auditoría desde **Configuración > Auditoría**.
+6. Antes del primer análisis de un curso, entre a **Plan semanal del curso** y asigne cada actividad a Semana 1–5 o `No incluir`.
+7. Guarde el plan semanal para que quede disponible en futuras sesiones y derivaciones.
+8. Regrese a **Conexión y análisis**, seleccione curso, sección, semana y fecha de corte.
+9. Active Page Views solo cuando la Developer Key tenga permiso y se necesite estimar sesiones.
+10. Ejecute el análisis.
+11. Revise el dashboard general y los expedientes individuales.
+12. Envíe mensajes desde **Mensajería Canvas**.
+13. Prepare derivaciones desde **Derivaciones**.
+14. Compare cortes desde **Historial y evolución**.
+15. Revise auditoría desde **Configuración > Auditoría**.
 
 ## Regla semanal
 

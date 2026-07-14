@@ -1,0 +1,11 @@
+AVE Alerta Temprana v1.5.2
+
+Correcciones del Plan semanal del curso:
+- El editor ya no preasigna actividades automáticamente a semanas 2, 3, 4 o 5 cuando no existe plan guardado. Todas inician como "No incluir" para que el asesor asigne solo las actividades reales de cada semana.
+- Se eliminó la columna ambigua "Incluir"; ahora la semana seleccionada es la única fuente de verdad. Si una actividad está en "Semana 1", cuenta para riesgo; si está en "No incluir", no cuenta.
+- Se corrigió la reutilización de estado de Streamlit en la tabla editable para evitar que asignaciones de un curso o render anterior se mezclen con otro.
+- El análisis ahora reconoce planes con columna "Semana" y también empata actividades por nombre normalizado, ignorando tildes y signos.
+- Se agregan diagnósticos de filas del plan emparejadas e incluidas para verificar si el análisis realmente está usando el plan semanal.
+- La distribución uniforme queda únicamente como respaldo cuando no existe ninguna actividad asignada en el plan.
+
+No requiere migración nueva en Supabase.
