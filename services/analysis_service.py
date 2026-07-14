@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable
 
@@ -79,6 +80,40 @@ class AnalysisService:
         return str(assignment.get("id") or "")
 
     @staticmethod
+    def _normalize_activity_name(value: Any) -> str:
+        """Normaliza nombres para poder empatar el plan aunque Canvas cambie un ID."""
+        text = str(value or "").strip().lower()
+        text = re.sub(r"\s+", " ", text)
+        return text
+
+    @staticmethod
+    def _plan_bool(value: Any, default: bool = True) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in {"true", "1", "sí", "si", "yes", "y"}:
+            return True
+        if text in {"false", "0", "no", "n", "none", "nan"}:
+            return False
+        return bool(value)
+
+    @staticmethod
+    def _plan_week(value: Any, total_weeks: int) -> int | None:
+        if value in (None, "", "No incluir"):
+            return None
+        text = str(value).strip()
+        if not text or text.lower() in {"none", "nan", "no incluir"}:
+            return None
+        text = text.replace("Semana", "").replace("semana", "").strip()
+        try:
+            week_number = int(float(text))
+        except (TypeError, ValueError):
+            return None
+        return week_number if 1 <= week_number <= total_weeks else None
+
+    @staticmethod
     def _plan_records(activity_plan: pd.DataFrame | list[dict[str, Any]] | None) -> list[dict[str, Any]]:
         if activity_plan is None:
             return []
@@ -102,24 +137,28 @@ class AnalysisService:
         """
         safe_week = min(max(1, int(week)), int(self.config.course_weeks))
         assignment_by_id = {self._assignment_id(item): item for item in assignments if self._assignment_id(item)}
+        assignment_id_by_name = {
+            self._normalize_activity_name(item.get("name")): self._assignment_id(item)
+            for item in assignments
+            if self._assignment_id(item)
+        }
         plan_rows = self._plan_records(activity_plan)
         plan_by_assignment: dict[str, dict[str, Any]] = {}
         for row in plan_rows:
-            assignment_id = str(row.get("canvas_assignment_id") or row.get("assignment_id") or row.get("id") or "")
-            if not assignment_id or assignment_id not in assignment_by_id:
+            raw_assignment_id = str(row.get("canvas_assignment_id") or row.get("assignment_id") or row.get("id") or "").strip()
+            activity_name = row.get("activity_name") or row.get("Actividad") or row.get("name") or ""
+            assignment_id = raw_assignment_id if raw_assignment_id in assignment_by_id else ""
+            if not assignment_id:
+                assignment_id = assignment_id_by_name.get(self._normalize_activity_name(activity_name), "")
+            if not assignment_id:
                 continue
-            try:
-                week_number = int(row.get("week_number")) if row.get("week_number") not in (None, "", "No incluir") else None
-            except (TypeError, ValueError):
-                week_number = None
-            include = bool(row.get("include_in_risk", True)) and week_number is not None
-            if week_number is not None and not (1 <= week_number <= self.config.course_weeks):
-                include = False
-                week_number = None
+
+            week_number = self._plan_week(row.get("week_number"), self.config.course_weeks)
+            include = self._plan_bool(row.get("include_in_risk", True), True) and week_number is not None
             plan_by_assignment[assignment_id] = {
                 "week_number": week_number,
                 "include_in_risk": include,
-                "is_required": bool(row.get("is_required", True)),
+                "is_required": self._plan_bool(row.get("is_required", True), True),
                 "manual_note": row.get("manual_note"),
             }
 
@@ -544,7 +583,12 @@ class AnalysisService:
                 except (TypeError, ValueError):
                     trend_delta = None
 
-            activity_indicator = evaluate_activity(len(completed_assignments), expected_count, self.config)
+            # Para el cumplimiento semanal se evalúan únicamente las actividades esperadas
+            # hasta la semana analizada. Las actividades futuras completadas no deben inflar
+            # ni deformar el indicador (evita casos como 4/1 cuando no se cargó el plan).
+            completed_for_progress = len(completed_expected_items)
+            completed_total_in_plan = len(completed_assignments)
+            activity_indicator = evaluate_activity(completed_for_progress, expected_count, self.config)
             grade_indicator = evaluate_grade(average, self.config, trend_delta)
             punctuality_indicator = evaluate_punctuality(
                 late_count,
@@ -583,7 +627,7 @@ class AnalysisService:
                 evolution = "Primera medición"
 
             completion_percentage = (
-                min(100.0, len(completed_assignments) / expected_count * 100.0) if expected_count else 0.0
+                min(100.0, completed_for_progress / expected_count * 100.0) if expected_count else 0.0
             )
             row = {
                 "canvas_user_id": canvas_user_id,
@@ -602,8 +646,9 @@ class AnalysisService:
                 "total_weeks": self.config.course_weeks,
                 "total_activities": total_activities,
                 "expected_activities": expected_count,
-                "completed_activities": len(completed_assignments),
+                "completed_activities": completed_for_progress,
                 "completed_expected": len(completed_expected_items),
+                "completed_total_in_plan": completed_total_in_plan,
                 "pending_count": len(pending_items),
                 "late_count": late_count,
                 "early_count": early_count,

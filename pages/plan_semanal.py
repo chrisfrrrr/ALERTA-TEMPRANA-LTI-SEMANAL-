@@ -264,6 +264,10 @@ edited = st.data_editor(
 )
 
 records = _editor_to_records(edited)
+# Mantiene el plan editado en la sesión activa. Así el análisis puede usarlo
+# de inmediato aunque el usuario aún no lo haya guardado en Supabase.
+st.session_state[f"course_activity_plan_records_{course_id}"] = records
+st.session_state[f"course_activity_plan_name_{course_id}"] = course_name
 summary_df = _summary(records)
 
 st.markdown("#### Resumen del plan")
@@ -277,6 +281,10 @@ c3.metric("Sin incluir", sum(1 for record in records if not record.get("include_
 st.divider()
 if st.button("Guardar plan semanal del curso", type="primary", use_container_width=True, disabled=not db.connected):
     try:
+        # Refuerza la sesión antes de persistir, para que el siguiente análisis
+        # use exactamente la configuración que el asesor acaba de revisar.
+        st.session_state[f"course_activity_plan_records_{course_id}"] = records
+        st.session_state[f"course_activity_plan_name_{course_id}"] = course_name
         saved = db.save_course_activity_plan(
             course_id=course_id,
             course_name=course_name,

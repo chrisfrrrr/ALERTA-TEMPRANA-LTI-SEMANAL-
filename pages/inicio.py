@@ -163,7 +163,16 @@ with switches_col:
         )
 
 activity_plan = pd.DataFrame()
-if not demo_mode and db.connected:
+session_plan_key = f"course_activity_plan_records_{selected_course['id']}"
+session_plan = st.session_state.get(session_plan_key)
+if session_plan:
+    activity_plan = pd.DataFrame(session_plan)
+    included_plan = int(activity_plan.get("include_in_risk", pd.Series(dtype=bool)).fillna(False).sum())
+    st.success(
+        f"Plan semanal de la sesión cargado para este curso: {included_plan} actividades incluidas en riesgo. "
+        "Si ya lo guardó, también quedará disponible en futuras sesiones."
+    )
+elif not demo_mode and db.connected:
     activity_plan = db.get_course_activity_plan(selected_course["id"])
     if activity_plan.empty:
         st.warning(
@@ -172,9 +181,9 @@ if not demo_mode and db.connected:
         )
     else:
         included_plan = int(activity_plan.get("include_in_risk", pd.Series(dtype=bool)).fillna(False).sum())
-        st.success(f"Plan semanal cargado para este curso: {included_plan} actividades incluidas en riesgo.")
+        st.success(f"Plan semanal guardado cargado para este curso: {included_plan} actividades incluidas en riesgo.")
 elif not demo_mode and not db.connected:
-    st.info("Sin Supabase conectado, el análisis usará la distribución uniforme de respaldo.")
+    st.info("Sin Supabase conectado ni plan en sesión, el análisis usará la distribución uniforme de respaldo.")
 
 st.caption(
     "La meta acumulada usa primero el Plan semanal guardado en Supabase. "

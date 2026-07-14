@@ -1,0 +1,22 @@
+AVE Alerta Temprana v1.5.1
+==========================
+
+Corrección del Plan semanal del curso
+-------------------------------------
+
+Problema corregido:
+- Cuando el asesor asignaba manualmente varias actividades a la Semana 1, el análisis podía seguir usando la distribución uniforme de respaldo y mostrar avances como 4/1.
+- Esto ocurría cuando el plan semanal no se cargaba desde Supabase o cuando la configuración estaba editada en la sesión pero todavía no se estaba usando directamente en el análisis.
+
+Cambios realizados:
+- El Plan semanal editado queda disponible inmediatamente en la sesión activa.
+- La página de análisis prioriza el plan de la sesión y luego el plan guardado en Supabase.
+- El motor de análisis usa las actividades realmente asignadas a la semana seleccionada.
+- Si 4 actividades están asignadas a Semana 1, la meta esperada para Semana 1 será 4, no 1.
+- Se corrigió el indicador de avance para que compare actividades completadas esperadas contra actividades esperadas.
+- Las actividades futuras completadas ya no deforman el indicador de avance.
+- Se agregó emparejamiento por nombre de actividad como respaldo si Canvas cambia o no coincide el ID de una actividad.
+- Se agregaron pruebas automatizadas específicas para validar que el Plan semanal calcule correctamente la meta esperada.
+
+Pruebas:
+- 16 pruebas automatizadas aprobadas.
