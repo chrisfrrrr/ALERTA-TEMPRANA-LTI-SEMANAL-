@@ -1,0 +1,32 @@
+AVE Alerta Temprana v1.5
+=========================
+
+Mejora principal
+----------------
+Se agregó el módulo Plan semanal del curso para resolver cursos sin fechas de entrega y con cantidad variable de actividades por semana.
+
+Cambios funcionales
+-------------------
+- Nueva pestaña: Operación > Plan semanal del curso.
+- La app carga las actividades desde Canvas y permite asignarlas manualmente a Semana 1, 2, 3, 4, 5 o No incluir.
+- El plan se guarda en Supabase en una tabla nueva e independiente: course_activity_plan.
+- El análisis semanal usa primero el plan guardado como fuente principal.
+- La distribución uniforme entre 5 semanas queda únicamente como respaldo temporal si no hay plan configurado.
+- El expediente individual ahora conserva la semana asignada, si la actividad cuenta para riesgo y si estaba esperada al cierre de la semana.
+- Se registra auditoría cuando se guarda o actualiza el plan semanal.
+
+Base de datos
+-------------
+- No se modifican ni se eliminan las tablas históricas existentes.
+- Se agregó una tabla pequeña e independiente: course_activity_plan.
+- Para actualizar Supabase, ejecutar nuevamente sql/schema.sql o únicamente sql/migration_course_activity_plan_v1_5.sql.
+
+Archivos principales modificados
+--------------------------------
+- app.py
+- pages/inicio.py
+- pages/plan_semanal.py
+- services/analysis_service.py
+- services/database_service.py
+- sql/schema.sql
+- sql/migration_course_activity_plan_v1_5.sql

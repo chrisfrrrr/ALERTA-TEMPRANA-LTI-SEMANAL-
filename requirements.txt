@@ -1,0 +1,15 @@
+# Versiones fijadas para Streamlit Community Cloud.
+# Evita que uv instale versiones futuras/muy nuevas que pueden provocar segmentation fault.
+streamlit==1.50.0
+pandas==2.2.3
+numpy==1.26.4
+pyarrow==17.0.0
+requests==2.32.3
+plotly==5.24.1
+openpyxl==3.1.5
+supabase==2.10.0
+python-dateutil==2.9.0.post0
+protobuf==5.29.5
+pillow==10.4.0
+altair==5.5.0
+watchdog==4.0.2

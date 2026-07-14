@@ -1,0 +1,8 @@
+CAMBIOS V1.4.1
+
+- Se fijaron versiones estables en requirements.txt para evitar que Streamlit Cloud instale versiones futuras/muy nuevas de dependencias nativas.
+- Se agregó fileWatcherType = "none" en .streamlit/config.toml para evitar fallos del observador de archivos/watchdog en despliegue.
+- No se cambió la lógica funcional de la aplicación.
+
+Motivo:
+El log mostraba un Segmentation fault después de instalar dependencias demasiado recientes con rangos abiertos. Esto suele ser un fallo nativo del entorno/dependencias, no un error del código Python de la app.

@@ -1,0 +1,12 @@
+AVE — INICIO RÁPIDO
+
+1. Abra una terminal dentro de esta carpeta.
+2. Instale dependencias:
+   python -m pip install -r requirements.txt
+3. Ejecute la app:
+   python -m streamlit run app.py
+4. La primera vez, utilice el modo Demostración o el token manual seguro.
+5. Para Supabase, ejecute sql/schema.sql y configure .streamlit/secrets.toml.
+6. Para usar la nueva distribución real de actividades, entre a Operación > Plan semanal del curso y asigne cada actividad a su semana.
+
+En Windows también puede ejecutar run_app.bat después de instalar las dependencias.
